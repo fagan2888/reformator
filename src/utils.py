@@ -2,6 +2,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def sign(number):
+    """Will return 1 for positive,
+    -1 for negative, and 0 for 0"""
+    try:return number/abs(number)
+    except ZeroDivisionError:return 0
+
+
 def show_histogram(variable, legend=''):
     hist, bins = np.histogram(variable, bins=35)
     width = 0.7 * (bins[1] - bins[0])

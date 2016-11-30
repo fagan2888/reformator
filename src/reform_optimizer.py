@@ -1,75 +1,41 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import cma
-from sklearn import tree
 import numpy as np
 import json
 import subprocess
 import os
 import random
 import math
-from enum import Enum
 
-
-def sign(number):
-    """Will return 1 for positive,
-    -1 for negative, and 0 for 0"""
-    try:return number/abs(number)
-    except ZeroDivisionError:return 0
-
+# Machine Learning imports
+import cma
+from sklearn import tree
 
 class EchantillonNotDefinedException(Exception):
     pass
 
 
-class Excalibur():
-    """Excalibur is a powerful tool to model, simplify and reform a legislation.
+class ReformOptimizer():
+    """ReformOptimizer is a class that create a reform optimized on multiple variable.
 
-        It takes as input a population with data (e.g., salaries/taxes/subsidies)
+        It takes a population manager, a target variable, and parameters for the optimization and returns a reform.
 
-        It provides two functionalities:
-            1) factorisation of existing legislation based on an economist's goals
-            2) efficiency to write reforms and evaluate them instantly
-
-        Population is given
     """
 
-    def __init__(self,  target_variable, taxable_variable, price_of_no_regression=0):
+    def __init__(self, population_manager, target_variable, taxable_variable=None, price_of_no_regression=0):
+        """
+            Args:
+                population_manager: The class that handles the population.
+                target_variable: The variable we try to predict , usually the available income.
+                taxable_variable: The variable on which we want to take a tax, if needed.
+        """
+
         self._target_variable = target_variable
         self._taxable_variable = taxable_variable
         self._max_cost = 0
-        self._population = None
         self._price_of_no_regression = price_of_no_regression
-
-    def filter_only_likely_population(self):
-        """
-            Removes unlikely elements in the population
-            TODO: This should be done by the population generator
-
-        :param raw_population:
-        :return: raw_population without unlikely cases
-        """
-        new_raw_population = []
-        for case in self._raw_population:
-            if (int(case['0DA']) <= 1950 or ('0DB' in case and int(case['0DA'] <= 1950))) and 'F' in case and int(case['F']) > 0:
-                pass
-            else:
-                new_raw_population.append(case)
-        self._raw_population = new_raw_population
-
-    def filter_only_no_revenu(self):
-        """
-            Removes people who have a salary from the population
-
-        :param raw_population:
-        :return: raw_population without null salary
-        """
-        new_raw_population = []
-        for case in self._raw_population:
-            if case.get('1AJ', 0) < 1 and case.get('1BJ', 0) < 1:
-                new_raw_population.append(case)
-        self._raw_population = new_raw_population
+        self._population_manager = population_manager
 
     def is_optimized_variable(self, var):
         return var != self._taxable_variable and var != self._target_variable
@@ -87,7 +53,7 @@ class Excalibur():
         self._tax_threshold_parameters = []
         self._parameters = set(parameters)
         index = 0
-        for person in self._population:
+        for person in self._population_manager._population:
             for var in parameters:
                 if var in person:
                     if var not in self._var_to_index:
@@ -116,7 +82,7 @@ class Excalibur():
 
     def find_all_possible_inputs(self, input_variable):
         possible_values = set()
-        for person in self._population:
+        for person in self._population_manager._population:
             if input_variable in person:
                 if person[input_variable] not in possible_values:
                     possible_values.add(person[input_variable])
@@ -124,7 +90,7 @@ class Excalibur():
 
     def find_min_values(self, input_variable, output_variable):
         min_values = {}
-        for person in self._population:
+        for person in self._population_manager._population:
             if input_variable not in person:
                 continue
             input = person[input_variable]
@@ -135,7 +101,7 @@ class Excalibur():
     def find_average_values(self, input_variable, output_variable):
         values = {}
         number_of_values = {}
-        for person in self._population:
+        for person in self._population_manager._population:
             if input_variable not in person:
                 continue
             input = person[input_variable]
@@ -199,7 +165,7 @@ class Excalibur():
         # First segment
         segment_name = variable + ' < ' + str(jumps[0])
         segment_names.append(segment_name)
-        for person in self._population:
+        for person in self._population_manager._population:
             if variable in person and person[variable] < jumps[0]:
                 person[segment_name] = 1
 
@@ -210,14 +176,14 @@ class Excalibur():
             else:
                 segment_name = variable + ' is ' + str(jumps[i-1])
             segment_names.append(segment_name)
-            for person in self._population:
+            for person in self._population_manager._population:
                 if variable in person and person[variable] >= jumps[i-1] and person[variable] < jumps[i]:
                     person[segment_name] = 1
 
         # end segment
         segment_name = variable + ' >= ' + str(jumps[-1])
         segment_names.append(segment_name)
-        for person in self._population:
+        for person in self._population_manager._population:
             if variable in person and person[variable] >= jumps[-1]:
                 person[segment_name] = 1
 
@@ -271,9 +237,9 @@ class Excalibur():
         total_cost = 0
         pissed_off_people = 0
 
-        nb_people = len(self._population)
+        nb_people = len(self._population_manager._population)
 
-        for person in self._population:
+        for person in self._population_manager._population:
             simulated = self.simulated_target(person, coefs)
             this_cost, this_error, this_error_util, this_pissed = self.compute_cost_error(simulated, person)
             total_cost += this_cost
@@ -284,7 +250,7 @@ class Excalibur():
         percentage_pissed_off = float(pissed_off_people) / float(nb_people)
 
         if random.random() > 0.98:
-            print 'Best: avg change per month: ' + repr(int(error / (12 * len(self._population))))\
+            print 'Best: avg change per month: ' + repr(int(error / (12 * len(self._population_manager._population))))\
                   + ' cost: ' \
                   + repr(int(self.normalize_on_population(total_cost) / 1000000))\
                   + ' M/year and '\
@@ -378,7 +344,7 @@ class Excalibur():
                                      'type': 'tax_threshold'})
             i += 1
 
-        simulated_results, error, cost, pissed = self.apply_reform_on_population(self._population, coefficients=res[0])
+        simulated_results, error, cost, pissed = self.apply_reform_on_population(self._population_manager._population, coefficients=res[0])
         return simulated_results, error, cost, final_parameters, pissed
 
 
@@ -408,14 +374,14 @@ class Excalibur():
 
         self.init_parameters(parameters)
 
-        X = self.population_to_input_vector(self._population)
-        y = map(lambda x: int(x[self._target_variable]), self._population)
+        X = self.population_to_input_vector(self._population_manager._population)
+        y = map(lambda x: int(x[self._target_variable]), self._population_manager._population)
 
         clf = tree.DecisionTreeRegressor(max_depth=max_depth,
                                          min_samples_leaf=min_samples_leaf)
         clf = clf.fit(X, y)
 
-        simulated_results, error, cost, pissed = self.apply_reform_on_population(self._population, decision_tree=clf)
+        simulated_results, error, cost, pissed = self.apply_reform_on_population_manager._population(self._population_manager._population, decision_tree=clf)
 
         if image_file is not None:
             with open( image_file + ".dot", 'w') as f:
@@ -452,7 +418,7 @@ class Excalibur():
         :param variable: The name of the variable of interest
         :return: True if all values are 0 or 1, False otherwise
         """
-        for person in self._population:
+        for person in self._population_manager._population:
             if variable in person and person[variable] not in [0, 1]:
                 return False
         return True
@@ -484,42 +450,11 @@ class Excalibur():
 
         return simulated_results, total_error / len(population), total_cost, pissed / float(len(population))
 
-    def add_concept(self, concept, function):
-        if self._population is None:
-            self._population = list(map(lambda x: {self._target_variable: x[self._target_variable]}, self._raw_population))
-
-        for i in range(len(self._raw_population)):
-            result = function(self._raw_population[i])
-            if result is not None and result is not False:
-                self._population[i][concept] = float(result)
-
     def normalize_on_population(self, cost):
-        if self._echantillon is None or self._echantillon == 0:
+        if self._population_manager._echantillon is None or self._population_manager._echantillon == 0:
             raise EchantillonNotDefinedException()
-        return cost / self._echantillon
-
-    def summarize_population(self):
-        total_people = 0
-        for family in self._raw_population:
-            total_people += 1
-            if '0DB' in family and family['0DB'] == 1:
-                total_people += 1
-            if 'F' in family:
-                total_people += family['F']
-
-        # We assume that there are 2000000 people with RSA
-        # TODO Put that where it belongs in the constructor
-        self._echantillon =  float(total_people) / 30000000
-        print 'Echantillon of ' + repr(total_people) + ' people, in percent of french population for similar revenu: ' + repr(100 * self._echantillon) + '%'
-
+        return cost / self._population_manager._echantillon
 
     def load_from_json(self, filename):
-        with open('../results/' + filename, 'r') as f:
+        with open('../data/' + filename, 'r') as f:
             return json.load(f)
-
-    def load_openfisca_results(self, filename):
-        results_openfisca = self.load_from_json(filename + '-openfisca.json')
-        testcases = self.load_from_json(filename + '-testcases.json')
-        self._raw_population = testcases[:]
-        for i in range(len(testcases)):
-            self._raw_population[i][self._target_variable] = results_openfisca[i][self._target_variable]
