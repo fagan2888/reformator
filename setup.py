@@ -30,7 +30,7 @@ OpenFisca includes a framework to simulate any tax and social system.
 
 from setuptools import setup, find_packages
 
-classifiers = """\
+classifiers = u"""\
 Development Status :: 2 - Pre-Alpha
 License :: OSI Approved :: GNU Affero General Public License v3
 Operating System :: POSIX
@@ -41,24 +41,24 @@ Topic :: Scientific/Engineering :: Information Analysis
 doc_lines = __doc__.split('\n')
 
 setup(
-    name = 'reformator',
-    version = '0.1',
+    name=u'OpenFisca-Reformator',
+    version='0.1',
 
-    author = 'Guillaume Chaslot',
-    author_email = 'contact@openfisca.fr',
-    classifiers = [classifier for classifier in classifiers.split('\n') if classifier],
-    description = doc_lines[0],
-    keywords = 'benefit microsimulation social tax',
-    license = 'http://www.fsf.org/licensing/licenses/agpl-3.0.html',
-    long_description = '\n'.join(doc_lines[2:]),
-    url = 'https://github.com/openfisca/reformator',
+    author=u'Guillaume Chaslot',
+    author_email='contact@openfisca.fr',
+    classifiers=[classifier for classifier in classifiers.split('\n') if classifier],
+    description=doc_lines[0],
+    keywords='benefit microsimulation social tax',
+    license='http://www.fsf.org/licensing/licenses/agpl-3.0.html',
+    long_description='\n'.join(doc_lines[2:]),
+    url='https://github.com/openfisca/reformator',
 
-    install_requires = [
+    install_requires=[
         'pandas >= 0.19',
         'tables',  # Needed by pandas.HDFStore
-        'sklearn', # Machine Learning
-        'cma' # Machine learning
+        'sklearn',  # Machine Learning
+        'cma',  # Machine learning
         ],
-    packages = find_packages(),
-    zip_safe = False,
+    packages=find_packages(),
+    zip_safe=False,
     )
