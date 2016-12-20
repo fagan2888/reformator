@@ -7,26 +7,46 @@ import subprocess
 import os
 import random
 import math
+import qgrid
 
 # Machine Learning imports
 import cma
 from sklearn import tree
 
-class EchantillonNotDefinedException(Exception):
+from econometrics import gini
+from econometrics import draw_ginis
+import pandas as pd
+
+
+class RepresentativityNotDefinedException(Exception):
+    print ('Please provide the number of individuals and their representativity in the population')
     pass
 
 
-class ReformOptimizer():
-    """ReformOptimizer is a class that create a reform optimized on multiple variable.
+class Reform():
+    """Reform is a class that create a reform optimized on multiple variable.
 
-        It takes a population manager, a target variable, and parameters for the optimization and returns a reform.
+        It takes a population, a target variable, and parameters for the optimization and returns a reform.
 
     """
 
-    def __init__(self, population_manager, target_variable, taxable_variable=None, price_of_no_regression=0):
+    def __init__(self,
+                 population,
+                 target_variable,
+                 benefits_constraints=[],
+                 taxes_constraints=[],
+                 tax_threshold_constraints=[],
+                 taxable_variable=None,
+                 max_cost=0,
+                 min_saving=0,
+                 verbose=False,
+                 percent_not_pissed_off=0,
+                 weights=None,
+                 price_of_no_regression=0,
+                 max_evals = 5000):
         """
             Args:
-                population_manager: The class that handles the population.
+                population: The class that handles the population.
                 target_variable: The variable we try to predict , usually the available income.
                 taxable_variable: The variable on which we want to take a tax, if needed.
         """
@@ -35,13 +55,62 @@ class ReformOptimizer():
         self._taxable_variable = taxable_variable
         self._max_cost = 0
         self._price_of_no_regression = price_of_no_regression
-        self._population_manager = population_manager
+        self._population = population
+        self._percent_not_pissed_off = percent_not_pissed_off
+        self._max_cost = max_cost
+        self._min_saving = min_saving
+        self._weights = weights
+
+        if (self._max_cost != 0 or self._min_saving != 0) and self._population._representativity is None:
+            raise RepresentativityNotDefinedException()
+
+        if verbose:
+            cma.CMAOptions('verb')
+
+        self.init_parameters(benefits_constraints=benefits_constraints,
+                             taxes_constraints=taxes_constraints,
+                             tax_threshold_constraints=tax_threshold_constraints)
+
+        # new_parameters = self.add_segments(direct_parameters,  barem_parameters)
+        # self.init_parameters(new_parameters)
+
+        res = cma.fmin(self.objective_function, self._all_coefs, 10000.0, options={'maxfevals': max_evals})
+
+        # print '\n\n\n Reform proposed: \n'
+        #
+        final_parameters = []
+
+        i = 0
+        while i < len(self._index_to_variable):
+            final_parameters.append({'variable': self._index_to_variable[i],
+                                     'value': res[0][i],
+                                     'type': 'benefit'})
+            i += 1
+
+        offset = len(self._index_to_variable)
+
+        while i < offset + len(self._tax_rate_parameters):
+            final_parameters.append({'variable': self._tax_rate_parameters[i-offset],
+                                     'value': res[0][i],
+                                     'type': 'tax_rate'})
+            i += 1
+
+        offset = len(self._index_to_variable) + len(self._tax_rate_parameters)
+        while i < offset + len(self._tax_threshold_parameters):
+            final_parameters.append({'variable': self._tax_threshold_parameters[i-offset],
+                                     'value': res[0][i],
+                                     'type': 'tax_threshold'})
+            i += 1
+
+        self.final_parameters = final_parameters
+        self.simulated_results, self.error, self.cost, self.pissed = self.apply_reform_on_population(self._population._population, coefficients=res[0])
+
 
     def is_optimized_variable(self, var):
         return var != self._taxable_variable and var != self._target_variable
 
-    def init_parameters(self, parameters, tax_rate_parameters=[], tax_threshold_parameters=[]):
-        print repr(parameters)
+    def init_parameters(self, benefits_constraints, taxes_constraints=[], tax_threshold_constraints=[]):
+        print repr(benefits_constraints)
         var_total = {}
         var_occurences = {}
         self._index_to_variable = []
@@ -51,10 +120,10 @@ class ReformOptimizer():
         self._var_tax_threshold_to_index = {}
         self._tax_rate_parameters = []
         self._tax_threshold_parameters = []
-        self._parameters = set(parameters)
+        self._parameters = set(benefits_constraints)
         index = 0
-        for person in self._population_manager._population:
-            for var in parameters:
+        for person in self._population._population:
+            for var in benefits_constraints:
                 if var in person:
                     if var not in self._var_to_index:
                         self._index_to_variable.append(var)
@@ -68,13 +137,13 @@ class ReformOptimizer():
         for var in self._index_to_variable:
             self._all_coefs.append(var_total[var] / var_occurences[var])
 
-        for var in tax_rate_parameters:
+        for var in taxes_constraints:
             self._all_coefs.append(0)
             self._var_tax_rate_to_index[var] = index
             self._tax_rate_parameters.append(var)
             index += 1
 
-        for var in tax_threshold_parameters:
+        for var in tax_threshold_constraints:
             self._all_coefs.append(5000)
             self._var_tax_threshold_to_index[var] = index
             self._tax_threshold_parameters.append(var)
@@ -82,7 +151,7 @@ class ReformOptimizer():
 
     def find_all_possible_inputs(self, input_variable):
         possible_values = set()
-        for person in self._population_manager._population:
+        for person in self._population._population:
             if input_variable in person:
                 if person[input_variable] not in possible_values:
                     possible_values.add(person[input_variable])
@@ -90,7 +159,7 @@ class ReformOptimizer():
 
     def find_min_values(self, input_variable, output_variable):
         min_values = {}
-        for person in self._population_manager._population:
+        for person in self._population._population:
             if input_variable not in person:
                 continue
             input = person[input_variable]
@@ -101,7 +170,7 @@ class ReformOptimizer():
     def find_average_values(self, input_variable, output_variable):
         values = {}
         number_of_values = {}
-        for person in self._population_manager._population:
+        for person in self._population._population:
             if input_variable not in person:
                 continue
             input = person[input_variable]
@@ -165,7 +234,7 @@ class ReformOptimizer():
         # First segment
         segment_name = variable + ' < ' + str(jumps[0])
         segment_names.append(segment_name)
-        for person in self._population_manager._population:
+        for person in self._population._population:
             if variable in person and person[variable] < jumps[0]:
                 person[segment_name] = 1
 
@@ -176,14 +245,14 @@ class ReformOptimizer():
             else:
                 segment_name = variable + ' is ' + str(jumps[i-1])
             segment_names.append(segment_name)
-            for person in self._population_manager._population:
+            for person in self._population._population:
                 if variable in person and person[variable] >= jumps[i-1] and person[variable] < jumps[i]:
                     person[segment_name] = 1
 
         # end segment
         segment_name = variable + ' >= ' + str(jumps[-1])
         segment_names.append(segment_name)
-        for person in self._population_manager._population:
+        for person in self._population._population:
             if variable in person and person[variable] >= jumps[-1]:
                 person[segment_name] = 1
 
@@ -237,9 +306,9 @@ class ReformOptimizer():
         total_cost = 0
         pissed_off_people = 0
 
-        nb_people = len(self._population_manager._population)
+        nb_people = len(self._population._population)
 
-        for person in self._population_manager._population:
+        for person in self._population._population:
             simulated = self.simulated_target(person, coefs)
             this_cost, this_error, this_error_util, this_pissed = self.compute_cost_error(simulated, person)
             total_cost += this_cost
@@ -250,13 +319,13 @@ class ReformOptimizer():
         percentage_pissed_off = float(pissed_off_people) / float(nb_people)
 
         if random.random() > 0.98:
-            print 'Best: avg change per month: ' + repr(int(error / (12 * len(self._population_manager._population))))\
+            print 'Best: avg change per month: ' + repr(int(error / (12 * len(self._population._population))))\
                   + ' cost: ' \
                   + repr(int(self.normalize_on_population(total_cost) / 1000000))\
                   + ' M/year and '\
                   + repr(int(1000 * percentage_pissed_off)/10) + '% people with lower salary'
 
-        cost_of_overbudget = 100000
+        cost_of_overbudget = 100
 
         if self.normalize_on_population(total_cost) > self._max_cost:
             error2 += pow(cost_of_overbudget, 2) * self.normalize_on_population(total_cost)
@@ -281,73 +350,6 @@ class ReformOptimizer():
                       + str(threshold) + ' euros'
         return new_parameters, optimal_values
 
-    def suggest_reform(self, parameters,
-                       max_cost=0,
-                       min_saving=0,
-                       verbose=False,
-                       tax_rate_parameters=[],
-                       tax_threshold_parameters=[],
-                       percent_not_pissed_off=0,
-                       weights=None):
-        """
-            Find parameters of a reform
-
-        :param parameters: variables that will be taken into account
-        :param max_cost: maximum cost of the reform in total, can be negative if we want savings
-        :param verbose:
-        :return: The reform for every element of the population
-        """
-
-        self._percent_not_pissed_off = percent_not_pissed_off
-        self._max_cost = max_cost
-        self._min_saving = min_saving
-        self._weights = weights
-
-        if (self._max_cost != 0 or self._min_saving != 0) and self._echantillon is None:
-            raise EchantillonNotDefinedException()
-
-        if verbose:
-            cma.CMAOptions('verb')
-
-        self.init_parameters(parameters,
-                             tax_rate_parameters=tax_rate_parameters,
-                             tax_threshold_parameters=tax_threshold_parameters)
-
-        # new_parameters = self.add_segments(direct_parameters,  barem_parameters)
-        # self.init_parameters(new_parameters)
-
-        res = cma.fmin(self.objective_function, self._all_coefs, 10000.0, options={'maxfevals': 5e3})
-
-        # print '\n\n\n Reform proposed: \n'
-        #
-        final_parameters = []
-
-        i = 0
-        while i < len(self._index_to_variable):
-            final_parameters.append({'variable': self._index_to_variable[i],
-                                     'value': res[0][i],
-                                     'type': 'base_revenu'})
-            i += 1
-
-        offset = len(self._index_to_variable)
-
-        while i < offset + len(self._tax_rate_parameters):
-            final_parameters.append({'variable': self._tax_rate_parameters[i-offset],
-                                     'value': res[0][i],
-                                     'type': 'tax_rate'})
-            i += 1
-
-        offset = len(self._index_to_variable) + len(self._tax_rate_parameters)
-        while i < offset + len(self._tax_threshold_parameters):
-            final_parameters.append({'variable': self._tax_threshold_parameters[i-offset],
-                                     'value': res[0][i],
-                                     'type': 'tax_threshold'})
-            i += 1
-
-        simulated_results, error, cost, pissed = self.apply_reform_on_population(self._population_manager._population, coefficients=res[0])
-        return simulated_results, error, cost, final_parameters, pissed
-
-
     def population_to_input_vector(self, population):
         output = []
         for person in population:
@@ -369,19 +371,20 @@ class ReformOptimizer():
         self._max_cost = max_cost
         self._min_saving = min_saving
 
-        if (self._max_cost != 0 or self._min_saving != 0) and self._echantillon is None:
-            raise EchantillonNotDefinedException()
+        if (self._max_cost != 0 or self._min_saving != 0) and self._population._representativity is None:
+            raise RepresentativityNotDefinedException()
 
         self.init_parameters(parameters)
 
-        X = self.population_to_input_vector(self._population_manager._population)
-        y = map(lambda x: int(x[self._target_variable]), self._population_manager._population)
+        X = self.population_to_input_vector(self._population._population)
+        y = map(lambda x: int(x[self._target_variable]), self._population._population)
 
         clf = tree.DecisionTreeRegressor(max_depth=max_depth,
                                          min_samples_leaf=min_samples_leaf)
         clf = clf.fit(X, y)
 
-        simulated_results, error, cost, pissed = self.apply_reform_on_population_manager._population(self._population_manager._population, decision_tree=clf)
+        self.simulated_results, self.error, self.cost, self.pissed = \
+            self.apply_reform_on_population._population(self._population._population, decision_tree=clf)
 
         if image_file is not None:
             with open( image_file + ".dot", 'w') as f:
@@ -409,7 +412,6 @@ class ReformOptimizer():
         #                          special_characters=True)
         # graph = pydotplus.graph_from_dot_data(dot_data)
         # Image(graph.create_png())
-        return simulated_results, error, cost, clf
 
     def is_boolean(self, variable):
         """
@@ -418,7 +420,7 @@ class ReformOptimizer():
         :param variable: The name of the variable of interest
         :return: True if all values are 0 or 1, False otherwise
         """
-        for person in self._population_manager._population:
+        for person in self._population._population:
             if variable in person and person[variable] not in [0, 1]:
                 return False
         return True
@@ -451,10 +453,47 @@ class ReformOptimizer():
         return simulated_results, total_error / len(population), total_cost, pissed / float(len(population))
 
     def normalize_on_population(self, cost):
-        if self._population_manager._echantillon is None or self._population_manager._echantillon == 0:
-            raise EchantillonNotDefinedException()
-        return cost / self._population_manager._echantillon
+        if self._population._representativity is None or self._population._representativity == 0:
+            raise RepresentativityNotDefinedException()
+        return cost / self._population._representativity
 
     def load_from_json(self, filename):
         with open('../data/' + filename, 'r') as f:
             return json.load(f)
+
+    def show_stats(self):
+        if self.cost > 0:
+            display_cost_name = 'Total Cost in Euros'
+            display_cost_value = int(self.cost)
+        else:
+            display_cost_name = 'Total Savings in Euros'
+            display_cost_value = -int(self.cost)
+
+        old_gini = gini(list(x[self._target_variable] for x in self._population._population))
+        new_gini = gini(self.simulated_results)
+
+        result_frame = pd.DataFrame({
+            display_cost_name: [display_cost_value],
+            'Average change / family / month in Euros' : [int(self.error) / 12],
+            'People losing money' : str(100 * self.pissed) + '%',
+            'Old Gini' : old_gini,
+            'New Gini' : new_gini,
+            })
+
+        result_frame.set_index(display_cost_name, inplace=True)
+        qgrid.show_grid(result_frame)
+
+    def draw_ginis(self):
+        draw_ginis(list(x[self._target_variable] for x in self._population._population), self.simulated_results)
+
+    def show_constraints_value(self, constraint):
+        coefficients = []
+        variables = []
+        for parameter in self.final_parameters:
+            if parameter['type'] == constraint:
+                coefficients.append(parameter['value'])
+                variables.append(parameter['variable'])
+
+        result_frame = pd.DataFrame({'Variables': variables, constraint + ' coef': coefficients})
+        result_frame.set_index('Variables', inplace=True)
+        qgrid.show_grid(result_frame)
