@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 
-import numpy as np
-import json
-import subprocess
 import os
-import random
-import math
+import json
+import pkg_resources
 
-# Machine Learning imports
-import cma
-from sklearn import tree
+import pandas as pd
 
+package_dir = pkg_resources.get_distribution('OpenFisca-Reformator').location
+data_dir = os.path.join(package_dir, 'data')
 
 class EchantillonNotDefinedException(Exception):
     pass
@@ -29,9 +26,27 @@ class Population():
         pass
 
     @classmethod
+    def from_csv(cls, base_name, nb_individuals, nb_individuals_ref):
+        self = cls()
+
+        population_df = pd.read_csv(os.path.join(data_dir, base_name))
+        self._population = [
+            row.to_dict()
+            for index, row in population_df.iterrows()
+            ]
+        self._raw_population=[
+            row.to_dict()
+            for index, row in population_df.iterrows()
+            ]
+
+        self.compute_representativity(nb_individuals, nb_individuals_ref)
+
+        return self
+
+    @classmethod
     def from_openfisca_files(cls, base_name, variables_loaded_from_results, nb_individuals, nb_individuals_ref):
         def load_from_json(filename):
-            with open('../data/' + filename, 'r') as f:
+            with open(os.path.join(data_dir, filename), 'r') as f:
                 return json.load(f)
 
         results_openfisca = load_from_json(base_name + '-openfisca.json')
@@ -46,11 +61,7 @@ class Population():
         """
         self = cls()
 
-        if nb_individuals_ref > 0:
-            self._representativity = nb_individuals / nb_individuals_ref
-        else:
-            self._representativity = None
-
+        self.compute_representativity(nb_individuals, nb_individuals_ref)
         self._raw_population = None
         self._population = []
 
@@ -65,6 +76,12 @@ class Population():
                 self._population[i][variable] = results[i][variable]
 
         return self
+
+    def compute_representativity(self, nb_individuals, nb_individuals_ref):
+        if nb_individuals_ref > 0:
+            self._representativity = nb_individuals / nb_individuals_ref
+        else:
+            self._representativity = None
 
     def print_population_from_cerfa_values(self):
         total_people = 0
